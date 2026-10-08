@@ -3,12 +3,12 @@
   "use strict";
   const W = window.BleWire;
   const $ = id => document.getElementById(id);
-  let device, tx, rx, decoder = new W.Decoder();
+  let device, tx, rx, decoder = new W.NotificationDecoder();
   let generation = 0, connecting = false, ready = false, intentional = true;
   let seat = -1, room = "", seq = 0, revision = -1, view = null, joinId = "";
   let record = null, storageKey = "", pending = null, busy = false, writeChunk = 20;
   let lastRx = 0, lastSync = 0, lastAttempt = 0, lastChange = performance.now();
-  let retryAt = 0, lostAt = 0, writeChain = Promise.resolve();
+  let retryAt = 0, lostAt = 0, reconnectAttempts = 0, healthySince = 0, writeChain = Promise.resolve();
   let stoppedReason = "";
   const events = [], rtts = [];
   let droppedLogs = 0;
@@ -65,16 +65,17 @@
   function resetLink() {
     ready = false; tx = null; writeChunk = 20;
     if (rx) rx.removeEventListener("characteristicvaluechanged", onValue);
-    rx = null; decoder = new W.Decoder();
+    rx = null; decoder = new W.NotificationDecoder(); healthySince = 0;
   }
   function disconnected() {
     generation++; connecting = false; busy = false;
     resetLink();
     if (!lostAt) lostAt = Date.now();
-    retryAt = Date.now() + 600;
+    const delayMs = W.reconnectDelay(reconnectAttempts++);
+    retryAt = Date.now() + delayMs;
     status(intentional ? stoppedReason || "已主动断开，席位与未确认操作保留。" :
       "连接中断；正在重连。iOS 请回到 Bluefy 前台，必要时点击重连。" + (stoppedReason ? " 原因：" + stoppedReason : ""));
-    log("disconnected", { intentional, seq }); render();
+    log("disconnected", { intentional, seq, delayMs, reason: stoppedReason }); render();
   }
   function failLink(error) {
     stoppedReason = explain(error);
@@ -116,11 +117,15 @@
     return `${e.name || "错误"}：${e.message || "请检查房主广播和系统蓝牙"}`;
   }
   function writeMessage(message) {
+    return writeBytes(W.encode(message));
+  }
+  // 业务和带包号的分片确认共用写入串行队列，避免浏览器 GATT 并发写冲突。
+  function writeBytes(bytes) {
     const epoch = generation;
     const operation = writeChain.then(async () => {
       if (!tx || epoch !== generation) throw new Error("连接已失效");
       busy = true;
-      const characteristic = tx, bytes = W.encode(message);
+      const characteristic = tx;
       try {
         // 首次握手用 20 字节；收到房主针对本连接确认的 MTU 上限后才放大。
         const chunkSize = writeChunk;
@@ -138,7 +143,12 @@
   function onValue(event) {
     try {
       const value = event.target.value;
-      const messages = decoder.feed(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      const { messages, ack } = decoder.feed(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      lastRx = Date.now();
+      if (ack) {
+        const epoch = generation;
+        writeBytes(ack).catch(e => { if (epoch === generation) failLink(e); });
+      }
       for (const m of messages) receive(m);
     } catch (e) { failLink(e); }
   }
@@ -157,6 +167,7 @@
         log("abandoned", { actionId: pending.actionId, reason: "房主已重建，旧操作结果未知" }); pending = null;
       }
       room = m.room; seat = m.seat; revision = -1; ready = true; connecting = false;
+      healthySince = Date.now(); lastSync = 0;
       record.room = room; save();
       status("已收到房主快照，席位恢复完成。断线后会重试同一 actionId。");
       if (lostAt) { log("recovered", { elapsedMs: Date.now() - lostAt }); lostAt = 0; }
@@ -218,7 +229,7 @@
       if (device) device.removeEventListener("gattserverdisconnected", disconnected);
       device = selected; resetLink(); seat = -1; room = ""; seq = 0; revision = -1; view = null;
       device.addEventListener("gattserverdisconnected", disconnected);
-      loadRecord(); await connect();
+      reconnectAttempts = 0; loadRecord(); await connect();
     } catch (e) {
       connecting = false; intentional = true;
       status(explain(e)); log("scan_error", { name: e.name, text: e.message }); render();
@@ -232,7 +243,7 @@
   $("send").addEventListener("click", () => sendAction($("challenge").value.trim()));
   $("sync").addEventListener("click", sync);
   $("export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ version: 1, userAgent: navigator.userAgent, room, seat, exportedAt: Date.now(),
+    const blob = new Blob([JSON.stringify({ version: 1, clientVersion: W.CLIENT_VERSION, userAgent: navigator.userAgent, room, seat, exportedAt: Date.now(),
       droppedLogs, p95Ms: W.percentile95(rtts), events }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob), a = document.createElement("a");
     a.href = url; a.download = `ble-seat-${seat}-${Date.now()}.json`; a.textContent = "保存日志";
@@ -241,22 +252,27 @@
   });
   setInterval(() => {
     const now = Date.now();
-    if (intentional || document.hidden) return;
-    if (!ready && !connecting && now >= retryAt) { retryAt = now + 2000; connect(); }
-    if (tx && lastRx && now - lastRx > 8000) { failLink(new Error("8 秒未收到完整快照")); return; }
+    if (intentional) return;
+    if (!ready && !connecting && now >= retryAt) connect();
+    if (tx && lastRx && W.stale(now, lastRx)) { failLink(new Error("链路：30 秒未收到房主数据")); return; }
     if (!ready || busy) return;
+    // 短暂握手成功不重置退避，连续稳定 30 秒才恢复最短重连间隔。
+    if (healthySince && now - healthySince >= W.SILENCE_MS) reconnectAttempts = 0;
+    const heartbeatMs = document.hidden ? W.HIDDEN_HEARTBEAT_MS : W.HEARTBEAT_MS;
+    // 心跳不受轮次、待确认操作和后台状态限制；后台暂停自动业务操作。
+    if (now - lastSync >= heartbeatMs) sync();
+    if (document.hidden) return;
     if (pending && now - lastAttempt > 3000) { attemptPending(); return; }
     if (!pending && $("auto").checked && seq < 1000 && view.turn === seat &&
       view.seats.every(s => s.connected) && performance.now() - lastChange >= 1800) {
       sendAction(`自动-${seq + 1}`); return;
     }
-    if (now - lastSync >= 2000) sync();
   }, 250);
   document.addEventListener("visibilitychange", () => {
     log("visibility", { hidden: document.hidden });
     if (!document.hidden && !intentional) {
-      if (ready && Date.now() - lastRx > 8000) failLink(new Error("回到前台，重建过期连接"));
-      else if (!ready) { retryAt = 0; connect(); } else sync();
+      if (tx && W.stale(Date.now(), lastRx)) failLink(new Error("链路：回到前台，连接已静默超过 30 秒"));
+      else if (!ready) { if (Date.now() >= retryAt) connect(); } else sync();
     }
   });
   async function prepareOffline() {
@@ -271,7 +287,7 @@
     } catch (e) { $("offline").textContent = "离线缓存未就绪：" + e.message + "。请保持页面打开，并记录冷启动限制。"; }
   }
   $("capability").textContent = navigator.bluetooth ?
-    `Web Bluetooth API 可用；${window.isSecureContext ? "安全来源" : "容器自定义来源，权限与缓存需实测"}。尚未验证无线连接。` :
-    "本页面可加载，但当前浏览器没有 Web Bluetooth。iPhone 请用 Bluefy；桌面 Chrome 请访问 http://localhost:8000 或 HTTPS。";
+    `网页 v${W.CLIENT_VERSION}；Web Bluetooth API 可用；${window.isSecureContext ? "安全来源" : "容器自定义来源，权限与缓存需实测"}。尚未验证无线连接。` :
+    `网页 v${W.CLIENT_VERSION}；本页面可加载，但当前浏览器没有 Web Bluetooth。iPhone 请用 Bluefy；桌面 Chrome 请访问 http://localhost:8000 或 HTTPS。`;
   render(); prepareOffline();
 })();
