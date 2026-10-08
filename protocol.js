@@ -5,7 +5,7 @@
   const WRITE = "c8571001-7f5a-4c49-8c36-7e345d142001";
   const NOTIFY = "c8571002-7f5a-4c49-8c36-7e345d142001";
   const MAX_FRAME = 8192;
-  const CLIENT_VERSION = "0.1.1";
+  const CLIENT_VERSION = "0.2.0";
   const SILENCE_MS = 30000, HEARTBEAT_MS = 3000, HIDDEN_HEARTBEAT_MS = 5000;
   function stale(now, lastRx) { return now - lastRx > SILENCE_MS; }
   function reconnectDelay(attempt) { return Math.min(30000, 1000 * 2 ** Math.min(attempt, 5)); }

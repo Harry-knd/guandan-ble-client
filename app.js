@@ -10,6 +10,35 @@
   let lastRx = 0, lastSync = 0, lastAttempt = 0, lastChange = performance.now();
   let retryAt = 0, lostAt = 0, reconnectAttempts = 0, healthySince = 0, writeChain = Promise.resolve();
   let stoppedReason = "";
+  const selected = new Set();
+  let wakeLock = null, wakeRequest = false;
+  const errorText = code => ({ INVALID_SHAPE: "不是合法牌型", CANNOT_BEAT: "压不过", NOT_YOUR_TURN: "还没轮到你",
+    MUST_PLAY: "新一轮必须出牌，不能过牌", INVALID_CARDS: "请选择有效手牌", NOT_YOUR_CARDS: "选中的牌不在你的手牌中",
+    NOT_STARTED: "请等待房主开始游戏", HAND_ENDED: "本局已结束", STALE_SEQ: "牌局已变化，请重新操作",
+    GAME_IN_PROGRESS: "本局已开始，新玩家请等下一局再加入", GAME_MODE: "游戏中不能发送通信测试消息"
+  }[code] || code);
+  async function keepAwake() {
+    if (!ready || document.hidden || wakeLock || wakeRequest) return;
+    wakeRequest = true;
+    try {
+      if (!navigator.wakeLock) throw new Error("不可用");
+      const lock = await navigator.wakeLock.request("screen");
+      if (!ready || document.hidden) { await lock.release(); return; }
+      wakeLock = lock;
+      $("wake").textContent = "屏幕常亮已开启；请保持 Bluefy 在前台。";
+      lock.addEventListener("release", () => {
+        if (wakeLock !== lock) return;
+        wakeLock = null;
+        $("wake").textContent = "屏幕常亮已释放，请把自动锁定设为永不，并保持页面前台。";
+      });
+    } catch (_) { $("wake").textContent = "无法开启屏幕常亮，请把自动锁定设为永不，并保持页面前台。"; }
+    finally { wakeRequest = false; }
+  }
+  function clearSelection() { selected.clear(); }
+  function releaseAwake() {
+    const lock = wakeLock; wakeLock = null;
+    if (lock) lock.release().catch(() => {});
+  }
   const events = [], rtts = [];
   let droppedLogs = 0;
   function log(kind, data) {
@@ -45,12 +74,33 @@
     $("turn").textContent = view ? view.turn : "—";
     $("seats").replaceChildren(...[0, 1, 2, 3].map(i => {
       const li = document.createElement("li"), s = view && view.seats[i];
-      li.textContent = `席位 ${i}：${!s ? "未知" : !s.occupied ? "空位" : s.connected ? "已连接" : "断线保留"}${i === seat ? "（我）" : ""}`;
+      li.textContent = `席位 ${i}：${!s ? "未知" : !s.occupied ? "空位" : s.bot ? "机器人" : s.connected ? "已连接" : "断线保留"}${i === seat ? "（我）" : seat >= 0 && i % 2 === seat % 2 ? "（队友）" : "（对手）"}${view && view.phase && view.phase !== "lobby" ? ` · 剩 ${s.remaining} 张` : ""}`;
       return li;
     }));
     $("card").textContent = view ? view.privateCard : "连接后由房主发送";
     $("last").textContent = view && view.last ? `#${view.last.number} 席位 ${view.last.seat}：${view.last.challenge}` : "—";
-    $("send").disabled = !ready || !view || view.turn !== seat || !!pending;
+    const hand = view && view.hand || [];
+    if (!view || view.phase !== "playing") selected.clear();
+    for (const id of selected) if (!hand.some(c => c.id === id)) selected.delete(id);
+    $("hand").replaceChildren(...hand.map(card => {
+      const button = document.createElement("button");
+      button.textContent = card.label;
+      button.className = "playing-card" + (card.red ? " red" : "") + (selected.has(card.id) ? " selected" : "");
+      button.setAttribute("aria-pressed", String(selected.has(card.id)));
+      button.disabled = !ready || !!pending || view.phase !== "playing";
+      button.addEventListener("click", () => { if (selected.has(card.id)) selected.delete(card.id); else selected.add(card.id); render(); });
+      return button;
+    }));
+    const previous = view && view.lastPlay;
+    $("last-play").textContent = previous ? `席位 ${previous.seat} · ${previous.shape.label}：${previous.cards.map(c => c.label).join(" ")}` : "自由出牌";
+    $("game-status").textContent = !view || !view.phase || view.phase === "lobby" ? "等待房主开始，空位将自动补机器人。" :
+      view.phase === "ended" ? (view.winnerTeam === seat % 2 ? "我方获胜！" : "对方获胜") :
+      `固定打 2 · ${view.turn === seat ? "轮到你了" : `等待席位 ${view.turn}${view.seats[view.turn].bot ? "（机器人思考中）" : ""}`} · 已选 ${selected.size} 张`;
+    const event = view && view.event;
+    $("game-event").textContent = event && event.type ? `席位 ${event.seat}${event.source === "bot" ? "（机器人）" : ""}：${({game_start:"开始发牌",play:"出牌",pass:"过牌",trick_end:"本轮结束，最后出牌者重新领出",hand_end:"本局结束"})[event.type] || event.type}` : "";
+    $("play").disabled = !ready || !!pending || !view || !view.canPlay || !selected.size;
+    $("pass").disabled = !ready || !!pending || !view || !view.canPass;
+    $("send").disabled = !ready || !view || view.turn !== seat || !!pending || !!(view.phase && view.phase !== "lobby");
     $("sync").disabled = !ready;
     $("connect").disabled = connecting || !!(device && device.gatt.connected) || !navigator.bluetooth;
     $("reconnect").disabled = !device || connecting || ready;
@@ -63,7 +113,7 @@
       .finally(() => clearTimeout(timer));
   }
   function resetLink() {
-    ready = false; tx = null; writeChunk = 20;
+    ready = false; releaseAwake(); tx = null; writeChunk = 20;
     if (rx) rx.removeEventListener("characteristicvaluechanged", onValue);
     rx = null; decoder = new W.NotificationDecoder(); healthySince = 0;
   }
@@ -159,7 +209,7 @@
     const p = m.payload;
     if (m.seat < 1 || m.seat > 3) {
       intentional = true;
-      failLink(new Error(`入房失败：${p.status}；席位不因断开释放，请由房主重建房间`));
+      failLink(new Error(`入房失败：${errorText(p.status)}；席位不因断开释放，请由房主重建房间`));
       return;
     }
     if (m.ack === joinId) {
@@ -167,7 +217,7 @@
         log("abandoned", { actionId: pending.actionId, reason: "房主已重建，旧操作结果未知" }); pending = null;
       }
       room = m.room; seat = m.seat; revision = -1; ready = true; connecting = false;
-      healthySince = Date.now(); lastSync = 0;
+      healthySince = Date.now(); lastSync = 0; keepAwake();
       record.room = room; save();
       status("已收到房主快照，席位恢复完成。断线后会重试同一 actionId。");
       if (lostAt) { log("recovered", { elapsedMs: Date.now() - lostAt }); lostAt = 0; }
@@ -183,12 +233,13 @@
     }
     if (pending && m.ack === pending.actionId) {
       if (p.status === "ok" || p.status === "duplicate") {
+        if (pending.type) selected.clear();
         const elapsedMs = pending.restored ? Date.now() - pending.startedWall : performance.now() - pending.startedPerf;
         rtts.push(elapsedMs);
         log("ack", { actionId: pending.actionId, appliedSeq: p.appliedSeq, status: p.status, elapsedMs, restored: !!pending.restored });
       } else {
         log("rejected", { actionId: pending.actionId, status: p.status });
-        status(`操作未执行：${p.status}。已同步最新状态，可轮到自己时重试。`);
+        status(`操作未执行：${errorText(p.status)}。已同步最新状态，可轮到自己时重试。`);
       }
       pending = null; save();
     }
@@ -201,13 +252,24 @@
     pending = { actionId: randomHex(16), expectedSeq: seq, challenge, startedPerf: performance.now(), startedWall: Date.now() };
     save(); lastAttempt = 0; render(); attemptPending();
   }
+  function sendGame(type) {
+    if (!ready) { status("请先连接房主"); return; }
+    if (pending) { status("上一操作正在确认，请稍候"); return; }
+    if (!view || view.phase !== "playing") { status("请等待房主开始下一局"); return; }
+    if (view.turn !== seat) { status("还没轮到你"); return; }
+    if (type === "play" && !selected.size) { status("请先选择手牌"); return; }
+    if (type === "pass" && !view.canPass) { status("新一轮必须出牌，不能过牌"); return; }
+    pending = { type, cards: type === "play" ? [...selected] : [], actionId: randomHex(16), expectedSeq: seq,
+      startedPerf: performance.now(), startedWall: Date.now() };
+    save(); lastAttempt = 0; render(); attemptPending();
+  }
   function attemptPending() {
     if (!pending || !ready || busy) return;
     lastAttempt = Date.now();
     const p = pending;
     log("tx_action", { actionId: p.actionId, expectedSeq: p.expectedSeq, challenge: p.challenge });
     const epoch = generation;
-    writeMessage(W.message(room, seat, seq, "action", { actionId: p.actionId, expectedSeq: p.expectedSeq, challenge: p.challenge }))
+    writeMessage(W.message(room, seat, seq, p.type || "action", { actionId: p.actionId, expectedSeq: p.expectedSeq, ...(p.type ? { cards: p.cards } : { challenge: p.challenge }) }))
       .catch(e => { if (epoch === generation) failLink(e); });
   }
   function sync() {
@@ -227,7 +289,7 @@
       const selected = await navigator.bluetooth.requestDevice({ filters: [{ services: [W.SERVICE] }] });
       connecting = false;
       if (device) device.removeEventListener("gattserverdisconnected", disconnected);
-      device = selected; resetLink(); seat = -1; room = ""; seq = 0; revision = -1; view = null;
+      device = selected; resetLink(); clearSelection(); seat = -1; room = ""; seq = 0; revision = -1; view = null;
       device.addEventListener("gattserverdisconnected", disconnected);
       reconnectAttempts = 0; loadRecord(); await connect();
     } catch (e) {
@@ -242,13 +304,31 @@
   });
   $("send").addEventListener("click", () => sendAction($("challenge").value.trim()));
   $("sync").addEventListener("click", sync);
+  $("play").addEventListener("click", () => sendGame("play"));
+  $("pass").addEventListener("click", () => sendGame("pass"));
+  function fullLog() {
+    const text = JSON.stringify({ version: 1, clientVersion: W.CLIENT_VERSION, userAgent: navigator.userAgent, room, seat,
+      exportedAt: Date.now(), droppedLogs, p95Ms: W.percentile95(rtts), events }, null, 2);
+    $("full-log").value = text; $("full-log").hidden = false;
+    return text;
+  }
+  $("show-log").addEventListener("click", fullLog);
+  $("copy-log").addEventListener("click", async () => {
+    const text = fullLog();
+    try { await navigator.clipboard.writeText(text); status("日志全文已复制"); }
+    catch (_) {
+      $("full-log").focus(); $("full-log").select();
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (_) {}
+      status(copied ? "日志全文已复制" : "请长按下方日志全文，选择全选、复制。");
+    }
+  });
   $("export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ version: 1, clientVersion: W.CLIENT_VERSION, userAgent: navigator.userAgent, room, seat, exportedAt: Date.now(),
-      droppedLogs, p95Ms: W.percentile95(rtts), events }, null, 2)], { type: "application/json" });
+    const blob = new Blob([fullLog()], { type: "application/json" });
     const url = URL.createObjectURL(blob), a = document.createElement("a");
     a.href = url; a.download = `ble-seat-${seat}-${Date.now()}.json`; a.textContent = "保存日志";
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
-    status("已请求导出日志；Bluefy 若显示预览，请通过分享菜单存入文件。若无下载结果，记录为容器导出兼容性问题。");
+    status("已显示日志全文并请求下载；Bluefy 无下载反应时请点击一键复制，或长按全文复制。");
   });
   setInterval(() => {
     const now = Date.now();
@@ -263,14 +343,16 @@
     if (now - lastSync >= heartbeatMs) sync();
     if (document.hidden) return;
     if (pending && now - lastAttempt > 3000) { attemptPending(); return; }
-    if (!pending && $("auto").checked && seq < 1000 && view.turn === seat &&
+    if ((!view.phase || view.phase === "lobby") && !pending && $("auto").checked && seq < 1000 && view.turn === seat &&
       view.seats.every(s => s.connected) && performance.now() - lastChange >= 1800) {
       sendAction(`自动-${seq + 1}`); return;
     }
   }, 250);
   document.addEventListener("visibilitychange", () => {
     log("visibility", { hidden: document.hidden });
+    if (document.hidden) releaseAwake();
     if (!document.hidden && !intentional) {
+      keepAwake();
       if (tx && W.stale(Date.now(), lastRx)) failLink(new Error("链路：回到前台，连接已静默超过 30 秒"));
       else if (!ready) { if (Date.now() >= retryAt) connect(); } else sync();
     }

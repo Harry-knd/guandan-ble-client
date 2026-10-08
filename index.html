@@ -4,17 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#123b4a">
-  <title>BLE 通信验证</title>
+  <title>掼蛋 v0.2</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="protocol.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
 <main>
-  <h1>BLE 通信验证</h1>
-  <p>安卓房主 + 3 个网页客户端 · 只验证通信，不含掼蛋规则</p>
+  <h1>掼蛋 v0.2</h1>
+  <p>安卓房主 + 网页玩家 · 空位由机器人补齐 · 对家为队友</p>
   <section aria-label="连接">
     <p id="capability" role="status">正在检查 Web Bluetooth…</p>
+    <p id="wake" role="status">连接后申请屏幕常亮；若不支持，请把自动锁定设为永不。</p>
     <p id="offline">正在检查离线资源…</p>
     <p id="status" role="status" aria-live="polite">尚未连接；页面内容不代表已与真机通信。</p>
     <div class="buttons">
@@ -28,9 +29,19 @@
     <p>房间：<strong id="room">—</strong>　我的席位：<strong id="seat">—</strong></p>
     <p>公共序号：<strong id="seq">—</strong>　当前轮到：<strong id="turn">—</strong></p>
     <ul id="seats"><li>席位 0：未知</li><li>席位 1：未知</li><li>席位 2：未知</li><li>席位 3：未知</li></ul>
-    <p>我的私有测试卡：<code id="card">连接后由房主发送</code></p>
-    <p>最近现场挑战：<strong id="last">—</strong></p>
+    <p hidden>我的私有测试卡：<code id="card">连接后由房主发送</code></p>
+    <p hidden>最近现场挑战：<strong id="last">—</strong></p>
   </section>
+  <section aria-label="牌桌">
+    <p id="game-status" role="status"></p>
+    <p>上一手 / 当前牌型：<strong id="last-play">—</strong></p>
+    <p id="game-event" aria-live="polite"></p>
+    <h2>我的手牌</h2>
+    <p class="hint">点击选择，再点取消。·1 / ·2 区分两副牌；♥2 为逢人配。牌型与大小由房主判定。</p>
+    <div id="hand" aria-label="我的手牌"></div>
+    <div class="buttons"><button id="play" disabled>出牌</button><button id="pass" disabled>过牌</button></div>
+  </section>
+  <details><summary>BLE 通信诊断（开局前）</summary>
   <section aria-label="发送测试消息">
     <label for="challenge">现场随机挑战词（1–96 UTF-8 字节）</label>
     <input id="challenge" maxlength="96" autocomplete="off" placeholder="例如：此刻看到的物品 + 临时数字">
@@ -41,8 +52,10 @@
     <label class="check"><input id="auto" type="checkbox">自动轮转：全员在线时，每次状态稳定 1.8 秒后操作，至公共序号 1000</label>
     <p id="metrics">已确认操作 0 条；RTT p95：—</p>
   </section>
+  </details>
   <section aria-label="日志">
-    <button id="export">导出本机日志 JSON</button>
+    <div class="buttons"><button id="export">导出日志 JSON</button><button id="show-log">显示全文</button><button id="copy-log">一键复制</button></div>
+    <textarea id="full-log" hidden readonly aria-label="日志全文"></textarea>
     <p class="hint">日志包含本机收到的私牌，用于隔离检查；不包含重连凭据。请分别保存每台设备的日志。</p>
     <pre id="log" aria-label="最近日志"></pre>
   </section>
