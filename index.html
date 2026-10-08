@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#123b4a">
+  <title>BLE 通信验证</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="protocol.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+<main>
+  <h1>BLE 通信验证</h1>
+  <p>安卓房主 + 3 个网页客户端 · 只验证通信，不含掼蛋规则</p>
+  <section aria-label="连接">
+    <p id="capability" role="status">正在检查 Web Bluetooth…</p>
+    <p id="offline">正在检查离线资源…</p>
+    <p id="status" role="status" aria-live="polite">尚未连接；页面内容不代表已与真机通信。</p>
+    <div class="buttons">
+      <button id="connect">扫描并连接房主</button>
+      <button id="reconnect" disabled>重连原房主</button>
+      <button id="disconnect" disabled>主动断开</button>
+    </div>
+    <p class="hint">选 GD- 开头的房间名。允许附近设备 / 蓝牙权限。iPhone 请在 Bluefy 内打开；首次扫描必须点击按钮。</p>
+  </section>
+  <section aria-label="房间状态">
+    <p>房间：<strong id="room">—</strong>　我的席位：<strong id="seat">—</strong></p>
+    <p>公共序号：<strong id="seq">—</strong>　当前轮到：<strong id="turn">—</strong></p>
+    <ul id="seats"><li>席位 0：未知</li><li>席位 1：未知</li><li>席位 2：未知</li><li>席位 3：未知</li></ul>
+    <p>我的私有测试卡：<code id="card">连接后由房主发送</code></p>
+    <p>最近现场挑战：<strong id="last">—</strong></p>
+  </section>
+  <section aria-label="发送测试消息">
+    <label for="challenge">现场随机挑战词（1–96 UTF-8 字节）</label>
+    <input id="challenge" maxlength="96" autocomplete="off" placeholder="例如：此刻看到的物品 + 临时数字">
+    <div class="buttons">
+      <button id="send" disabled>发送测试消息</button>
+      <button id="sync" disabled>获取最新快照</button>
+    </div>
+    <label class="check"><input id="auto" type="checkbox">自动轮转：全员在线时，每次状态稳定 1.8 秒后操作，至公共序号 1000</label>
+    <p id="metrics">已确认操作 0 条；RTT p95：—</p>
+  </section>
+  <section aria-label="日志">
+    <button id="export">导出本机日志 JSON</button>
+    <p class="hint">日志包含本机收到的私牌，用于隔离检查；不包含重连凭据。请分别保存每台设备的日志。</p>
+    <pre id="log" aria-label="最近日志"></pre>
+  </section>
+</main>
+</body>
+</html>
