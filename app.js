@@ -1,7 +1,15 @@
-/* 仅使用标准 Web Bluetooth。没有服务器、CDN、模拟房主或预填私牌。 */
+/* 共用牌桌：正式模式消费权威快照；只有显式 demo=1 才使用演示数据。 */
 (function () {
   "use strict";
   const W = window.BleWire;
+  const T = window.GdTransports;
+  const demoMode = new URLSearchParams(window.location && window.location.search || "").get("demo") === "1";
+  const hostMode = !demoMode && !!window.GdHost;
+  const table = window.GdTable.create(document);
+  let hostState = null;
+  const transport = demoMode ? new T.DemoTransport(receive) : hostMode ?
+    new T.LocalBridgeTransport(window.GdHost, receive) : new T.BluetoothTransport(m => writeBytes(W.encode(m)), receive);
+  if (hostMode) window.gdHostSnapshot = message => transport.deliver(message);
   const $ = id => document.getElementById(id);
   let device, tx, rx, decoder = new W.NotificationDecoder();
   let generation = 0, connecting = false, ready = false, intentional = true;
@@ -13,11 +21,12 @@
   const selected = new Set();
   let wakeLock = null, wakeRequest = false;
   const errorText = code => ({ INVALID_SHAPE: "不是合法牌型", CANNOT_BEAT: "压不过", NOT_YOUR_TURN: "还没轮到你",
-    MUST_PLAY: "新一轮必须出牌，不能过牌", INVALID_CARDS: "请选择有效手牌", NOT_YOUR_CARDS: "选中的牌不在你的手牌中",
+    DEMO_SINGLE_ONLY: "演示仅支持单张；完整牌型请连接安卓房主体验", MUST_PLAY: "新一轮必须出牌，不能过牌", INVALID_CARDS: "请选择有效手牌", NOT_YOUR_CARDS: "选中的牌不在你的手牌中",
     NOT_STARTED: "请等待房主开始游戏", HAND_ENDED: "本局已结束", STALE_SEQ: "牌局已变化，请重新操作",
     GAME_IN_PROGRESS: "本局已开始，新玩家请等下一局再加入", GAME_MODE: "游戏中不能发送通信测试消息"
   }[code] || code);
   async function keepAwake() {
+    if (hostMode || demoMode) return;
     if (!ready || document.hidden || wakeLock || wakeRequest) return;
     wakeRequest = true;
     try {
@@ -46,11 +55,11 @@
     events.push(event);
     if (events.length > 50000) { events.shift(); droppedLogs++; }
     $("log").textContent = events.slice(-35).map(e => {
-      if (e.kind === "rx") return `${e.time} 收到 ${e.message.type} seq=${e.message.seq} status=${e.message.payload.status}`;
+      if (e.kind === "rx") return `${e.time} 收到 ${e.message.type} seq=${e.message.seq} status=${e.message.payload && e.message.payload.status || "idle"}`;
       return JSON.stringify(e);
     }).join("\n");
   }
-  function status(text) { $("status").textContent = text; }
+  function status(text) { $("status").textContent = text; $("feedback").textContent = text; }
   function randomHex(size) { return Array.from(crypto.getRandomValues(new Uint8Array(size)), x => x.toString(16).padStart(2, "0")).join(""); }
   function save() {
     if (!record) return;
@@ -72,36 +81,27 @@
     $("seat").textContent = seat < 0 ? "—" : seat;
     $("seq").textContent = seat < 0 ? "—" : seq;
     $("turn").textContent = view ? view.turn : "—";
-    $("seats").replaceChildren(...[0, 1, 2, 3].map(i => {
-      const li = document.createElement("li"), s = view && view.seats[i];
-      li.textContent = `席位 ${i}：${!s ? "未知" : !s.occupied ? "空位" : s.bot ? "机器人" : s.connected ? "已连接" : "断线保留"}${i === seat ? "（我）" : seat >= 0 && i % 2 === seat % 2 ? "（队友）" : "（对手）"}${view && view.phase && view.phase !== "lobby" ? ` · 剩 ${s.remaining} 张` : ""}`;
-      return li;
-    }));
     $("card").textContent = view ? view.privateCard : "连接后由房主发送";
-    $("last").textContent = view && view.last ? `#${view.last.number} 席位 ${view.last.seat}：${view.last.challenge}` : "—";
+    $("last").textContent = view && view.last ? `#${view.last.number} 席位 ${view.last.seat}：${view.last.challenge || view.last.type}` : "—";
     const hand = view && view.hand || [];
     if (!view || view.phase !== "playing") selected.clear();
     for (const id of selected) if (!hand.some(c => c.id === id)) selected.delete(id);
-    $("hand").replaceChildren(...hand.map(card => {
-      const button = document.createElement("button");
-      button.textContent = card.label;
-      button.className = "playing-card" + (card.red ? " red" : "") + (selected.has(card.id) ? " selected" : "");
-      button.setAttribute("aria-pressed", String(selected.has(card.id)));
-      button.disabled = !ready || !!pending || view.phase !== "playing";
-      button.addEventListener("click", () => { if (selected.has(card.id)) selected.delete(card.id); else selected.add(card.id); render(); });
-      return button;
-    }));
-    const previous = view && view.lastPlay;
-    $("last-play").textContent = previous ? `席位 ${previous.seat} · ${previous.shape.label}：${previous.cards.map(c => c.label).join(" ")}` : "自由出牌";
-    $("game-status").textContent = !view || !view.phase || view.phase === "lobby" ? "等待房主开始，空位将自动补机器人。" :
-      view.phase === "ended" ? (view.winnerTeam === seat % 2 ? "我方获胜！" : "对方获胜") :
-      `固定打 2 · ${view.turn === seat ? "轮到你了" : `等待席位 ${view.turn}${view.seats[view.turn].bot ? "（机器人思考中）" : ""}`} · 已选 ${selected.size} 张`;
-    const event = view && view.event;
-    $("game-event").textContent = event && event.type ? `席位 ${event.seat}${event.source === "bot" ? "（机器人）" : ""}：${({game_start:"开始发牌",play:"出牌",pass:"过牌",trick_end:"本轮结束，最后出牌者重新领出",hand_end:"本局结束"})[event.type] || event.type}` : "";
-    $("play").disabled = !ready || !!pending || !view || !view.canPlay || !selected.size;
-    $("pass").disabled = !ready || !!pending || !view || !view.canPass;
+    table.render({view, seat, room, ready, pending, selected, toggle(id) {
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+      $("feedback").textContent = ""; render();
+    }});
+    if (hostMode) {
+      $("host-create").disabled = !!(hostState && hostState.running);
+      $("host-stop").disabled = !hostState || !hostState.running;
+      $("host-start").disabled = !ready || !!pending || !view || view.phase === "playing";
+      $("host-export").disabled = !ready;
+      $("host-awake").checked = !hostState || hostState.keepAwake;
+      $("auto").checked = !!(hostState && hostState.auto);
+      $("log").textContent = hostState && hostState.logs || "";
+    }
     $("send").disabled = !ready || !view || view.turn !== seat || !!pending || !!(view.phase && view.phase !== "lobby");
     $("sync").disabled = !ready;
+    $("auto").disabled = demoMode || !ready || !!(view && view.phase !== "lobby");
     $("connect").disabled = connecting || !!(device && device.gatt.connected) || !navigator.bluetooth;
     $("reconnect").disabled = !device || connecting || ready;
     $("disconnect").disabled = !device || (intentional && !device.gatt.connected);
@@ -167,7 +167,7 @@
     return `${e.name || "错误"}：${e.message || "请检查房主广播和系统蓝牙"}`;
   }
   function writeMessage(message) {
-    return writeBytes(W.encode(message));
+    return transport.send(message);
   }
   // 业务和带包号的分片确认共用写入串行队列，避免浏览器 GATT 并发写冲突。
   function writeBytes(bytes) {
@@ -199,20 +199,36 @@
         const epoch = generation;
         writeBytes(ack).catch(e => { if (epoch === generation) failLink(e); });
       }
-      for (const m of messages) receive(m);
+      for (const m of messages) transport.deliver(m);
     } catch (e) { failLink(e); }
   }
   function receive(m) {
     if (m.type !== "snapshot") throw new Error("未知下行消息");
     lastRx = Date.now();
-    log("rx", { message: m });
+    // 原生日志另有导出入口，避免把整段滚动日志重复存进每个快照。
+    const {host, ...wireSnapshot} = m;
+    log("rx", { message: wireSnapshot });
     const p = m.payload;
-    if (m.seat < 1 || m.seat > 3) {
+    if (hostMode || demoMode) {
+      if (hostMode) {
+        hostState = m.host;
+        if (!hostState) return;
+        $("status").textContent = hostState.status;
+        $("wake").textContent = hostState.keepAwake ? "房主屏幕常亮已开启（应用前台）" : "房主屏幕常亮已关闭";
+        if (!hostState.running || !p) {
+          ready = false; pending = null; view = null; seat = 0; room = ""; seq = 0; revision = -1;
+          selected.clear(); $("feedback").textContent = hostState.status; render(); return;
+        }
+      }
+      if (room !== m.room) { revision = -1; seq = 0; pending = null; selected.clear(); }
+      room = m.room; seat = 0; ready = true;
+    }
+    if (m.seat < (hostMode || demoMode ? 0 : 1) || m.seat > 3) {
       intentional = true;
       failLink(new Error(`入房失败：${errorText(p.status)}；席位不因断开释放，请由房主重建房间`));
       return;
     }
-    if (m.ack === joinId) {
+    if (!hostMode && !demoMode && m.ack === joinId) {
       if (record.room && record.room !== m.room && pending) {
         log("abandoned", { actionId: pending.actionId, reason: "房主已重建，旧操作结果未知" }); pending = null;
       }
@@ -234,6 +250,7 @@
     if (pending && m.ack === pending.actionId) {
       if (p.status === "ok" || p.status === "duplicate") {
         if (pending.type) selected.clear();
+        $("feedback").textContent = pending.type === "pass" ? "已过牌" : pending.type === "play" ? "出牌成功" : "操作已确认";
         const elapsedMs = pending.restored ? Date.now() - pending.startedWall : performance.now() - pending.startedPerf;
         rtts.push(elapsedMs);
         log("ack", { actionId: pending.actionId, appliedSeq: p.appliedSeq, status: p.status, elapsedMs, restored: !!pending.restored });
@@ -253,6 +270,11 @@
     save(); lastAttempt = 0; render(); attemptPending();
   }
   function sendGame(type) {
+    if (hostMode && type === "game_start") {
+      if (!ready || pending || !view || view.phase === "playing") return;
+      pending = {type, cards:[], actionId:randomHex(16), expectedSeq:seq, startedPerf:performance.now(), startedWall:Date.now()};
+      render(); attemptPending(); return;
+    }
     if (!ready) { status("请先连接房主"); return; }
     if (pending) { status("上一操作正在确认，请稍候"); return; }
     if (!view || view.phase !== "playing") { status("请等待房主开始下一局"); return; }
@@ -279,6 +301,16 @@
     writeMessage(W.message(room, seat, seq, "sync", { requestId: randomHex(16) }))
       .catch(e => { if (epoch === generation) failLink(e); });
   }
+  $("clear-selection").addEventListener("click", () => { if (!pending) { selected.clear(); render(); } });
+  function hostCommand(command, value) {
+    if (hostMode) transport.send({command, value}).catch(e => status("宿主桥接失败：" + e.message));
+  }
+  $("host-create").addEventListener("click", () => hostCommand("create"));
+  $("host-start").addEventListener("click", () => sendGame("game_start"));
+  $("host-stop").addEventListener("click", () => hostCommand("stop"));
+  $("host-export").addEventListener("click", () => hostCommand("export"));
+  $("host-awake").addEventListener("change", () => hostCommand("awake", $("host-awake").checked));
+  $("auto").addEventListener("change", () => hostCommand("auto"));
   $("connect").addEventListener("click", async () => {
     try {
       if (!navigator.bluetooth) throw new Error("本容器没有 Web Bluetooth；iPhone 请用 Bluefy，桌面请用 Chrome。");
@@ -332,7 +364,8 @@
   });
   setInterval(() => {
     const now = Date.now();
-    if (intentional) return;
+    if (hostMode) { if (pending && Date.now() - lastAttempt > 3000) attemptPending(); return; }
+    if (demoMode || intentional) return;
     if (!ready && !connecting && now >= retryAt) connect();
     if (tx && lastRx && W.stale(now, lastRx)) { failLink(new Error("链路：30 秒未收到房主数据")); return; }
     if (!ready || busy) return;
@@ -358,6 +391,7 @@
     }
   });
   async function prepareOffline() {
+    if (hostMode || window.GdHost) { $("offline").textContent = "APK 内置同一份网页资源，无需网络或缓存即可加载。"; return; }
     if (!("serviceWorker" in navigator) || !window.isSecureContext) {
       $("offline").textContent = "本容器未提供安全来源下的离线缓存能力；请在地面加载并保持页面打开。冷启动离线重载待实测。";
       return;
@@ -371,5 +405,13 @@
   $("capability").textContent = navigator.bluetooth ?
     `网页 v${W.CLIENT_VERSION}；Web Bluetooth API 可用；${window.isSecureContext ? "安全来源" : "容器自定义来源，权限与缓存需实测"}。尚未验证无线连接。` :
     `网页 v${W.CLIENT_VERSION}；本页面可加载，但当前浏览器没有 Web Bluetooth。iPhone 请用 Bluefy；桌面 Chrome 请访问 http://localhost:8000 或 HTTPS。`;
+  $("host-controls").hidden = !hostMode;
+  $("bluetooth-controls").hidden = hostMode || demoMode;
+  $("web-log-controls").hidden = hostMode;
+  $("demo-notice").hidden = !demoMode;
+  $("demo-link").hidden = demoMode;
+  $("mode-label").textContent = demoMode ? "演示模式 · v0.3" : hostMode ? "安卓房主 · v0.3" : "网页玩家 · v0.3";
+  if (hostMode) { $("capability").textContent = "本机 WebView 桥接 · 席位 0 · 权威引擎运行在安卓服务"; hostCommand("sync"); }
+  if (demoMode) { transport.snapshot(); status("演示可试出单张；多张会显示中文提示。左右滑动查看全部 27 张牌。"); }
   render(); prepareOffline();
 })();

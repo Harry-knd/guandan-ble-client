@@ -2,63 +2,65 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#123b4a">
-  <title>掼蛋 v0.2</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#082d31">
+  <title>掼蛋 · 牌桌 v0.3</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="protocol.js"></script>
+  <script defer src="transports.js"></script>
+  <script defer src="table-ui.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
 <main>
-  <h1>掼蛋 v0.2</h1>
-  <p>安卓房主 + 网页玩家 · 空位由机器人补齐 · 对家为队友</p>
-  <section aria-label="连接">
-    <p id="capability" role="status">正在检查 Web Bluetooth…</p>
-    <p id="wake" role="status">连接后申请屏幕常亮；若不支持，请把自动锁定设为永不。</p>
-    <p id="offline">正在检查离线资源…</p>
-    <p id="status" role="status" aria-live="polite">尚未连接；页面内容不代表已与真机通信。</p>
-    <div class="buttons">
-      <button id="connect">扫描并连接房主</button>
-      <button id="reconnect" disabled>重连原房主</button>
-      <button id="disconnect" disabled>主动断开</button>
+  <header class="topbar"><div><h1>掼蛋 <span>牌桌</span></h1><small>双副牌 · 对家同队</small></div>
+    <div class="top-links"><span id="mode-label">网页玩家 · v0.3</span><a id="demo-link" href="?demo=1">免连接体验牌桌 ↗</a></div>
+  </header>
+  <p id="demo-notice" class="demo-notice" hidden>演示数据 · 无蓝牙连接。可试出单张、过牌；这是界面脚本，不是完整对局。<a href="?demo=1">重置</a> / <a href="?">退出</a></p>
+  <section class="table" aria-label="掼蛋牌桌">
+    <div class="table-inscription" aria-hidden="true">GUANDAN <span>搭档之间 · 方寸之上</span></div>
+    <div id="game-status" class="turn-banner" role="status" aria-live="polite">等待开局</div>
+    <div id="seats" aria-label="四个席位"></div>
+    <div class="center-play">
+      <span class="eyebrow">本轮牌面</span>
+      <p id="lead">对家同队 · 固定打 2</p>
+      <div id="center-cards" aria-label="上一手牌"></div>
+      <strong id="last-play">自由出牌</strong>
+      <p id="game-event" aria-live="polite"></p>
     </div>
-    <p class="hint">选 GD- 开头的房间名。允许附近设备 / 蓝牙权限。iPhone 请在 Bluefy 内打开；首次扫描必须点击按钮。</p>
-  </section>
-  <section aria-label="房间状态">
-    <p>房间：<strong id="room">—</strong>　我的席位：<strong id="seat">—</strong></p>
-    <p>公共序号：<strong id="seq">—</strong>　当前轮到：<strong id="turn">—</strong></p>
-    <ul id="seats"><li>席位 0：未知</li><li>席位 1：未知</li><li>席位 2：未知</li><li>席位 3：未知</li></ul>
-    <p hidden>我的私有测试卡：<code id="card">连接后由房主发送</code></p>
-    <p hidden>最近现场挑战：<strong id="last">—</strong></p>
-  </section>
-  <section aria-label="牌桌">
-    <p id="game-status" role="status"></p>
-    <p>上一手 / 当前牌型：<strong id="last-play">—</strong></p>
-    <p id="game-event" aria-live="polite"></p>
-    <h2>我的手牌</h2>
-    <p class="hint">点击选择，再点取消。·1 / ·2 区分两副牌；♥2 为逢人配。牌型与大小由房主判定。</p>
-    <div id="hand" aria-label="我的手牌"></div>
-    <div class="buttons"><button id="play" disabled>出牌</button><button id="pass" disabled>过牌</button></div>
-  </section>
-  <details><summary>BLE 通信诊断（开局前）</summary>
-  <section aria-label="发送测试消息">
-    <label for="challenge">现场随机挑战词（1–96 UTF-8 字节）</label>
-    <input id="challenge" maxlength="96" autocomplete="off" placeholder="例如：此刻看到的物品 + 临时数字">
-    <div class="buttons">
-      <button id="send" disabled>发送测试消息</button>
-      <button id="sync" disabled>获取最新快照</button>
+    <div class="hand-area">
+      <div class="hand-heading"><strong>我的手牌</strong><span id="selection-count">已选 0 / 0 张</span></div>
+      <div id="hand" aria-label="我的手牌"></div>
+      <p id="hand-empty">连接房主后等待发牌，或点击右上角体验牌桌</p>
+      <div class="hand-footer"><span>左右滑动看牌 · 点选上浮 · ♥2 配牌</span><button id="clear-selection" class="text-button">取消选择</button></div>
+      <p id="feedback" role="status" aria-live="polite"></p>
+      <div class="actions"><button id="pass" class="secondary" disabled>过牌</button><button id="play" class="primary" disabled>出牌</button></div>
     </div>
-    <label class="check"><input id="auto" type="checkbox">自动轮转：全员在线时，每次状态稳定 1.8 秒后操作，至公共序号 1000</label>
-    <p id="metrics">已确认操作 0 条；RTT p95：—</p>
   </section>
+  <details id="connection-panel" class="drawer"><summary>房间与连接 <span>连接设备 / 房主操作</span></summary>
+    <div id="host-controls" hidden class="buttons">
+      <button id="host-create">建房 / 返回房间</button><button id="host-start" disabled>开始游戏 / 下一局</button>
+      <button id="host-stop" disabled>停止房间</button><button id="host-export" disabled>导出房主日志</button>
+      <label><input id="host-awake" type="checkbox" checked>保持屏幕常亮</label>
+    </div>
+    <div id="bluetooth-controls" class="buttons"><button id="connect">扫描并连接房主</button><button id="reconnect" disabled>重连原房主</button><button id="disconnect" disabled>主动断开</button></div>
+    <p id="status" role="status">尚未连接；打开抽屉连接房主，或免连接体验牌桌。</p>
+    <p>房间 <strong id="room">—</strong> · 我的席位 <strong id="seat">—</strong> · 序号 <strong id="seq">—</strong> · 当前轮到 <strong id="turn">—</strong></p>
+    <p id="capability"></p><p id="wake">连接后申请屏幕常亮；若不支持，请把自动锁定设为永不。</p><p id="offline"></p>
+    <p class="hint">iPhone 请用 Bluefy 打开 HTTPS 网页，扫描 GD- 房间；桌面使用 Chrome。</p>
   </details>
-  <section aria-label="日志">
-    <div class="buttons"><button id="export">导出日志 JSON</button><button id="show-log">显示全文</button><button id="copy-log">一键复制</button></div>
-    <textarea id="full-log" hidden readonly aria-label="日志全文"></textarea>
-    <p class="hint">日志包含本机收到的私牌，用于隔离检查；不包含重连凭据。请分别保存每台设备的日志。</p>
-    <pre id="log" aria-label="最近日志"></pre>
-  </section>
+  <details class="drawer"><summary>诊断与日志 <span>开局前通信测试 / 导出</span></summary>
+    <p>测试私牌：<code id="card">连接后由房主发送</code> · 最近挑战：<strong id="last">—</strong></p>
+    <label for="challenge">现场随机挑战词（1–96 UTF-8 字节）</label>
+    <input id="challenge" maxlength="96" autocomplete="off" placeholder="输入现场临时挑战词">
+    <div class="buttons"><button id="send" disabled>发送测试消息</button><button id="sync" disabled>获取最新快照</button></div>
+    <label><input id="auto" type="checkbox">自动轮转（大厅全员在线，至序号 1000）</label>
+    <p id="metrics"></p>
+    <div id="web-log-controls" class="buttons"><button id="export">导出日志 JSON</button><button id="show-log">显示全文</button><button id="copy-log">一键复制</button></div>
+    <p class="hint">网页日志含本席私牌，不含重连凭据；房主日志由上方房间面板导出。</p>
+    <textarea id="full-log" hidden readonly aria-label="日志全文"></textarea><pre id="log" aria-label="最近日志"></pre>
+  </details>
+  <footer class="page-footer">v0.3 · 离线牌桌 · 游戏裁决由安卓房主完成</footer>
 </main>
 </body>
 </html>
