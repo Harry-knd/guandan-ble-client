@@ -1,5 +1,5 @@
 /* 只缓存静态资源；绝不缓存 BLE 快照、私牌或操作。 */
-const CACHE = "gd-ble-static-v4";
+const CACHE = "gd-ble-static-v5";
 const FILES = ["./", "./index.html", "./style.css", "./protocol.js", "./app.js", "./transports.js", "./table-ui.js"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));

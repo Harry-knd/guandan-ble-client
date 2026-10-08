@@ -16,13 +16,14 @@
   <header class="topbar"><div><h1>掼蛋 <span>牌桌</span></h1><small>双副牌 · 对家同队</small></div>
     <div class="top-links"><span id="mode-label">网页玩家 · v0.3</span><a id="demo-link" href="?demo=1">免连接体验牌桌 ↗</a></div>
   </header>
-  <p id="demo-notice" class="demo-notice" hidden>演示数据 · 无蓝牙连接。可试出单张、过牌；这是界面脚本，不是完整对局。<a href="?demo=1">重置</a> / <a href="?">退出</a></p>
+  <p id="demo-notice" class="demo-notice" hidden>演示模式 · 这是界面脚本，不是完整对局。演示数据，无蓝牙连接；可试出单张、过牌。<a href="?demo=1">重置</a> / <a href="?">退出</a></p>
   <section class="table" aria-label="掼蛋牌桌">
     <div class="table-inscription" aria-hidden="true">GUANDAN <span>搭档之间 · 方寸之上</span></div>
     <div id="game-status" class="turn-banner" role="status" aria-live="polite">等待开局</div>
     <div id="seats" aria-label="四个席位"></div>
     <div class="center-play">
       <span class="eyebrow">本轮牌面</span>
+      <p id="round-notice" role="status" aria-live="polite" hidden></p>
       <p id="lead">对家同队 · 固定打 2</p>
       <div id="center-cards" aria-label="上一手牌"></div>
       <strong id="last-play">自由出牌</strong>

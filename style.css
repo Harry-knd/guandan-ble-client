@@ -16,6 +16,10 @@ button,input,textarea {font:inherit} button,a,input,summary {touch-action:manipu
 @media(max-width:600px) {:root {--card-w:62px;--card-h:90px} main {padding:0 10px 12px}.topbar{height:68px}h1{font-size:23px}small{font-size:9px;letter-spacing:1px}.top-links{font-size:10px}.demo-notice{font-size:10px;padding:7px 9px}.table{min-height:630px;height:calc(100svh - 130px);border-radius:24px}.table:before{inset:17px 14px 265px}.turn-banner{top:16px;font-size:12px;padding:7px 15px}.seat{width:80px;padding:8px;gap:4px;border-radius:11px;grid-template-columns:23px 1fr}.seat-top{top:63px;width:120px;grid-template-columns:26px 1fr}.seat-left{left:12px;top:29%}.seat-right{right:12px;top:29%}.seat-title{font-size:12px}.team-tag{font-size:9px;letter-spacing:0}.seat-count{font-size:11px}.seat-state{font-size:10px}.card-stack{width:18px;height:27px}.seat-bottom{width:150px;bottom:245px;grid-template-columns:1fr 1fr;padding:7px 10px}.center-play{top:31%;bottom:314px;left:96px;right:96px;min-height:155px}#center-cards{max-width:100%;gap:3px;min-height:82px;padding:3px 3px 7px}#center-cards .playing-card{--card-w:43px;--card-h:64px}#center-cards .card-corner{left:4px;top:4px}#center-cards .card-rank{font-size:16px}#center-cards .card-suit{font-size:13px}#center-cards .card-pip{font-size:24px;right:4px;bottom:12px}#center-cards .card-deck{font-size:9px;right:4px;bottom:3px}#center-cards .card-wild{font-size:8px;right:2px;top:3px}#lead{font-size:10px;margin:4px 0 7px}#last-play{font-size:12px}#game-event{font-size:10px}.eyebrow{font-size:9px;letter-spacing:2px}.table-inscription{font-size:27px;letter-spacing:5px}.table-inscription span{font-size:9px;letter-spacing:3px}.hand-area{padding:10px 12px 15px}#hand{min-height:121px}#hand .playing-card + .playing-card{margin-left:-19px}.card-rank{font-size:21px}.card-pip{font-size:31px}.actions button{min-width:120px;padding:11px 20px}.drawer{padding:0 12px}.drawer summary span{font-size:10px;margin-left:8px}.page-footer{font-size:10px} }
 @media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
 /* 固定反馈区高度，收发提示不会挤动手牌；副牌号位于叠牌露出的左侧。 */
+#round-notice {font-size:17px;line-height:1.6;font-weight:700;color:var(--gold);background:#092c30ed;border:1px solid #f4d58a88;border-radius:12px;padding:12px 16px;margin:10px 0;max-width:100%}
+.seat-notice {position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);width:220px;padding:8px 10px;border:1px solid var(--gold);border-radius:9px;background:#253c33;color:#ffe4ae;font-size:13px;line-height:1.5;text-align:center;box-shadow:0 4px 15px #0005}
+.seat-left .seat-notice {left:0;transform:none}
+.seat-right .seat-notice {left:auto;right:0;transform:none}
 .table {min-height:740px}
 .seat-bottom {bottom:306px}
 .center-play {top:206px;bottom:375px;min-height:0}
@@ -26,6 +30,7 @@ button,input,textarea {font:inherit} button,a,input,summary {touch-action:manipu
 .joker .card-rank {font-size:15px;letter-spacing:0}
 @media(min-width:1000px) {#hand .playing-card + .playing-card {margin-left:-30px}}
 @media(max-width:600px) {
+  #round-notice {font-size:14px;padding:9px 10px}
   .table {min-height:700px}
   .seat-bottom {bottom:285px}
   .center-play {top:180px;bottom:350px;min-height:0}

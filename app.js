@@ -19,10 +19,11 @@
   let retryAt = 0, lostAt = 0, reconnectAttempts = 0, healthySince = 0, writeChain = Promise.resolve();
   let stoppedReason = "";
   const selected = new Set();
+  let seatNotice = null;
   let wakeLock = null, wakeRequest = false;
   const errorText = code => ({ INVALID_SHAPE: "不是合法牌型", CANNOT_BEAT: "压不过", NOT_YOUR_TURN: "还没轮到你",
-    DEMO_SINGLE_ONLY: "演示仅支持单张；完整牌型请连接安卓房主体验", MUST_PLAY: "新一轮必须出牌，不能过牌", INVALID_CARDS: "请选择有效手牌", NOT_YOUR_CARDS: "选中的牌不在你的手牌中",
-    NOT_STARTED: "请等待房主开始游戏", HAND_ENDED: "本局已结束", STALE_SEQ: "牌局已变化，请重新操作",
+    DEMO_SINGLE_ONLY: "演示仅支持单张；完整牌型请连接安卓房主体验", MUST_PLAY: "新一轮必须出牌，不能过牌", INVALID_CARDS: "请选择自己的有效手牌，不能重复选牌", NOT_YOUR_CARDS: "请选择自己的有效手牌，不能重复选牌",
+    NOT_STARTED: "请等待房主开始游戏", HAND_ENDED: "本局已结束，请由房主开始下一局", STALE_SEQ: "牌局已变化，请按最新状态重新操作", HOST_ONLY: "只有房主可以开始游戏",
     GAME_IN_PROGRESS: "本局已开始，新玩家请等下一局再加入", GAME_MODE: "游戏中不能发送通信测试消息"
   }[code] || code);
   async function keepAwake() {
@@ -86,7 +87,8 @@
     const hand = view && view.hand || [];
     if (!view || view.phase !== "playing") selected.clear();
     for (const id of selected) if (!hand.some(c => c.id === id)) selected.delete(id);
-    table.render({view, seat, room, ready, pending, selected, toggle(id) {
+    if (seatNotice && (seatNotice.room !== room || seatNotice.seq !== seq || !view || view.phase !== "playing")) seatNotice = null;
+    table.render({view, seat, room, ready, pending, selected, seatNotice, toggle(id) {
       if (selected.has(id)) selected.delete(id); else selected.add(id);
       $("feedback").textContent = ""; render();
     }});
@@ -256,6 +258,7 @@
         log("ack", { actionId: pending.actionId, appliedSeq: p.appliedSeq, status: p.status, elapsedMs, restored: !!pending.restored });
       } else {
         log("rejected", { actionId: pending.actionId, status: p.status });
+        if (p.status === "MUST_PLAY") seatNotice = {seat, room, seq, text:errorText(p.status)};
         status(`操作未执行：${errorText(p.status)}。已同步最新状态，可轮到自己时重试。`);
       }
       pending = null; save();
@@ -278,9 +281,12 @@
     if (!ready) { status("请先连接房主"); return; }
     if (pending) { status("上一操作正在确认，请稍候"); return; }
     if (!view || view.phase !== "playing") { status("请等待房主开始下一局"); return; }
-    if (view.turn !== seat) { status("还没轮到你"); return; }
+    if (view.turn !== seat) { status(errorText("NOT_YOUR_TURN")); return; }
     if (type === "play" && !selected.size) { status("请先选择手牌"); return; }
-    if (type === "pass" && !view.canPass) { status("新一轮必须出牌，不能过牌"); return; }
+    if (type === "pass" && !view.canPass) {
+      seatNotice = {seat, room, seq, text:errorText("MUST_PLAY")};
+      status(seatNotice.text); render(); return;
+    }
     pending = { type, cards: type === "play" ? [...selected] : [], actionId: randomHex(16), expectedSeq: seq,
       startedPerf: performance.now(), startedWall: Date.now() };
     save(); lastAttempt = 0; render(); attemptPending();

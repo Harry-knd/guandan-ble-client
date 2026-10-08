@@ -5,6 +5,7 @@
     const $ = id => document.getElementById(id);
     const node = (tag, cls, text) => { const n = document.createElement(tag); n.className = cls; if (text != null) n.textContent = text; return n; };
     let lastHandKey = "", lastPlayKey = "", lastEventKey = "", lastRoom = "";
+    let roundNotice = "";
     const seatStates = new Map();
     function face(card, button = false) {
       const el = node(button ? "button" : "div", "playing-card" + (card.red ? " red" : ""));
@@ -19,9 +20,17 @@
       el.replaceChildren(...children);
       return el;
     }
-    function render({view, seat, room, ready, pending, selected, toggle}) {
+    function render({view, seat, room, ready, pending, selected, seatNotice, toggle}) {
       const me = seat < 0 ? 0 : seat, hand = view && view.hand || [], playing = view && view.phase === "playing";
       const event = view && view.event, eventKey = JSON.stringify(event);
+      const newEvent = eventKey !== lastEventKey || lastRoom !== room;
+      if (lastRoom !== room || !view || view.phase === "lobby") roundNotice = "";
+      if (event && newEvent) {
+        if (["game_start", "play"].includes(event.type)) roundNotice = "";
+        // 正式事件中的 seat 是最后过牌者，turn 才是本轮重新领出者。
+        if (event.type === "trick_end") roundNotice = `本轮结束 · 由席位 ${view.turn} 重新领出`;
+      }
+      if (view && view.phase === "ended") roundNotice = `本局结束 · ${view.winnerTeam === me % 2 ? "我方获胜！" : "对方获胜"}`;
       if (lastRoom !== room || (eventKey !== lastEventKey && event && ["game_start", "trick_end"].includes(event.type))) seatStates.clear();
       if (event && eventKey !== lastEventKey && ["play", "pass"].includes(event.type)) seatStates.set(event.seat, event.type === "pass" ? "过牌" : "已出牌");
       lastRoom = room; lastEventKey = eventKey;
@@ -34,8 +43,12 @@
         const state = !s || !s.occupied ? "等待入座" : active ? (s.bot ? "思考中…" : "出牌中") : seatStates.get(i) || (s.bot ? "机器人" : s.connected ? "已就位" : "断线保留");
         const stack = node("span", "card-stack"); stack.setAttribute("aria-hidden", "true");
         el.replaceChildren(node("span", "team-tag", relative === 0 ? "我 · 我方" : own ? "队友 · 我方" : "对手 · 对方"),
-          node("strong", "seat-title", `席位 ${i}`), stack,
+          node("strong", "seat-title", `席位 ${i}${s && s.bot ? " · 机器人" : ""}`), stack,
           node("span", "seat-count", playing || view && view.phase === "ended" ? `${s ? s.remaining : 0} 张` : "— 张"), node("span", "seat-state", state));
+        if (seatNotice && seatNotice.seat === i) {
+          const notice = node("span", "seat-notice", seatNotice.text);
+          notice.setAttribute("role", "status"); el.append(notice);
+        }
         return el;
       }));
       const previous = view && view.lastPlay, playKey = JSON.stringify(previous);
@@ -68,11 +81,17 @@
       const rank = previous && previous.shape.rank;
       $("last-play").textContent = previous ? `${previous.shape.label} / ${({11:"J",12:"Q",13:"K",14:"A",15:"2",16:"小王",17:"大王"})[rank] || rank || ""}` : "自由出牌";
       $("lead").textContent = previous ? `席位 ${previous.seat} 领出 · 等待接牌` : playing ? `席位 ${view.turn} 领出新一轮` : "对家同队 · 固定打 2";
+      // 提示保留到下一次出牌；心跳、选牌和拒绝操作不会把它冲掉。
+      $("round-notice").textContent = roundNotice;
+      $("round-notice").hidden = !roundNotice;
+      $("lead").hidden = !!roundNotice;
+      $("last-play").hidden = !!roundNotice;
+      $("center-cards").hidden = !!roundNotice && !previous;
       $("game-status").textContent = !view || !view.phase || view.phase === "lobby" ? "等待开局" : view.phase === "ended" ?
         (view.winnerTeam === me % 2 ? "我方获胜！" : "对方获胜") : view.turn === me ? "轮到你出牌" :
         `轮到席位 ${view.turn}${view.seats[view.turn].bot ? " · 机器人思考中…" : " · 等待出牌"}`;
       $("game-status").className = playing && view.turn === me ? "turn-banner my-turn" : "turn-banner";
-      $("game-event").textContent = event && event.type ? `席位 ${event.seat} · ${({game_start:"开始发牌",play:"出牌",pass:"过牌",trick_end:"本轮结束，重新领出",hand_end:"本局结束"})[event.type] || "通信更新"}` : "空位开局自动补机器人";
+      $("game-event").textContent = event && event.type ? `席位 ${event.seat}${event.source === "bot" ? " · 机器人" : ""} · ${({game_start:"开始发牌",play:"出牌",pass:"过牌",trick_end:"本轮结束",hand_end:"本局结束"})[event.type] || "通信更新"}` : "空位开局自动补机器人";
       $("selection-count").textContent = `已选 ${selected.size} / ${hand.length} 张`;
       $("hand-empty").hidden = hand.length > 0;
       const disabled = !ready || !!pending || !playing;
@@ -89,7 +108,9 @@
         $("hand").scrollLeft = scroll; lastHandKey = handKey;
       }
       $("play").disabled = !ready || !!pending || !playing || view.turn !== seat || !view.canPlay || !selected.size;
-      $("pass").disabled = !ready || !!pending || !playing || view.turn !== seat || !view.canPass;
+      // 领出时保留解释入口；点击由共用处理器显示 MUST_PLAY，不发送操作。
+      $("pass").disabled = !ready || !!pending || !playing || view.turn !== seat;
+      $("pass").textContent = playing && view.turn === seat && !view.canPass ? "过牌（需出牌）" : "过牌";
       $("play").textContent = pending ? "确认中…" : `出牌${selected.size ? ` (${selected.size})` : ""}`;
     }
     return {render, face};
